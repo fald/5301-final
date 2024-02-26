@@ -1,0 +1,257 @@
+---
+title: "3-2-Shooting-Data"
+author: "Anonymous"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs}
+library(tidyverse)
+```
+
+# The Data Set
+For this project, we're looking at data covering NYPD shooting incidents.
+  
+"Start an Rmd document that describes and imports the shooting project dataset in a reproducible manner."  
+
+```{r import_data}
+url = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+shooting_data <- read_csv(url)
+```
+
+The output of the previous code block tells us that there are $27,312$ observations, each composed of $21$ columns.  
+Let's get an idea of what's in the data set.
+```{r data_overview}
+shooting_data
+```
+
+So this appears to be a list of crimes that involve shooting including details about the perpetrators and the victims as well as when and where the shooting occurred.  
+  
+
+# Summary
+  
+"Add to your Rmd document a summary of the data and clean up your dataset by changing appropriate variables to factor and date types and getting rid of any columns not needed.  Show the summary of your data to be sure there is no missing data. If there is missing data, describe how you plan to handle it."  
+  
+Let's see what those columns are and a summary of their contents.
+
+```{r brief_overview}
+summary(shooting_data)
+```
+
+From the summary, we can see that the date column is not a date data-type, so we can fix that.  
+As with the COVID data, precise locations are probably not interesting, so we will drop the coordinates and longitude/latitude columns.  
+Similarly, the incident key is more of a logging element, so not useful for analysis.
+  
+Before we do anything, what else can we work out?  
+We probably want to check out how many NA values exist in each column, which will give us an idea of what columns are useless (even if they are theoretically interesting) as well as some idea of what could be done with other columns.  
+  
+It might also be useful to see how many unique values occur in each column. This can give us an idea if a column has meaningful information. If there are as many unique values as there are rows when talking about a location, for example, then there's probably nothing useful in that column.
+```{r uniques_and_nas}
+# Stolen from somewhere online - count how many values in each column are NA
+shooting_data %>%
+  summarise(across(everything(),
+                   ~sum(is.na(.))))
+
+# Counting unique values - apply the function to each column with sapply
+sapply(shooting_data, function(x) n_distinct(x))
+```
+
+Looking at these results, we can see that most location of occurrence description fields are empty. Thus, we'll just drop it.  
+Same for the location classification field.  
+  
+A little over half of the location description fields are empty, but of those that remain, there are a neat package of $41$ unique values, potentially giving us some limited insight. Perhaps the NA fields are unknown or out in the open?  
+  
+Many perpetrator details are missing, but this makes sense as not every shooting is solved. These account for roughly $1/3$ of the cases and can be kept in.  
+  
+Looking now at just the unique values, we have $7$ age groups, which makes sense (spoiler: just by scouring manually, I spotted an age group of $940$, which is...probably not accurate, so this will require further cleaning down the line).  
+Racial splits are similar and make sense at a brief glance.  
+  
+Using  
+https://data.cityofnewyork.us/Public-Safety/NYPD-Shooting-Incident-Data-Historic-/833y-fsy8  
+we see that jurisdiction code is also maybe not interesting at this point. Same with the precinct as we already have the borough. Might want to revisit this later, but for now, that seems sound.  
+Statistical murder flag, however, is interesting, denoting whether the shooting resulted in a death. So that can stay.  
+
+The values for sex are odd, at $5$ and $3$ for perpetrator and victim, respectively, so that may need further checking, but first let's clean up what we know we want to be rid of.
+
+```{r data_transformation_1}
+drop_cols <- c("INCIDENT_KEY", "X_COORD_CD", "Y_COORD_CD",
+               "Latitude", "Longitude", "Lon_Lat",
+               "LOC_OF_OCCUR_DESC", "PRECINCT", "JURISDICTION_CODE",
+               "LOC_CLASSFCTN_DESC")
+
+shooting_data <- shooting_data %>%
+  mutate(`OCCUR_DATE` = mdy(`OCCUR_DATE`)) %>%
+  select(-all_of(drop_cols))
+```
+
+Now that we have that out of the way, time to check the unique value in the columns that remain (not times or dates).
+
+```{r further_checks}
+# This boils down to: check distinct values for small-enough columns. 
+# There's probably a better way to do this?
+shooting_data %>%
+  select(-c("OCCUR_DATE", "OCCUR_TIME")) %>%
+  sapply(unique)
+```
+
+Going through the list:
+- Boroughs look fine.
+- For locations, we can see "(null)" and "NONE" that can be wrapped up into NA.
+- Statistical murder flag looks fine.
+- Age groups are not great. For the PERP_AGE_GROUP, we have "UNKNOWN", "940", "(null)", "224", and "1020", which can (probably) be safely placed under NA.
+- Jumping to the VIC_AGE_GROUP, we see "UNKNOWN" that can be turned into NA (this may require checking how many NA values are present again...) and we see the "1022" code again. The best I can say with a Google search is maybe it's a Ten-code meaning "disregard", which doesn't fit - so we'll just say NA.
+- The sex fields can be boiled down to "M", "F", "NA/unknown" as well.
+- Racial information can also mix the "(null)" and "UNKNOWN" values into "NA".  
+  
+We'll see how that affects our information in a bit.  
+```{r data_transformation_2}
+# Probably a better way again - but this time for sure.
+# Maybe mutate?
+shooting_data$LOCATION_DESC <- shooting_data$LOCATION_DESC %>%
+  na_if("NONE")
+shooting_data$LOCATION_DESC <- shooting_data$LOCATION_DESC %>%
+  na_if("(null)")
+
+shooting_data$PERP_AGE_GROUP <- shooting_data$PERP_AGE_GROUP %>% 
+  na_if("UNKNOWN")
+shooting_data$PERP_AGE_GROUP <- shooting_data$PERP_AGE_GROUP %>% 
+  na_if("(null)")
+shooting_data$PERP_AGE_GROUP <- shooting_data$PERP_AGE_GROUP %>% 
+  na_if("940")
+shooting_data$PERP_AGE_GROUP <- shooting_data$PERP_AGE_GROUP %>% 
+  na_if("224")
+shooting_data$PERP_AGE_GROUP <- shooting_data$PERP_AGE_GROUP %>% 
+  na_if("1020")
+
+shooting_data$VIC_AGE_GROUP <- shooting_data$VIC_AGE_GROUP %>% 
+  na_if("UNKNOWN")
+shooting_data$VIC_AGE_GROUP <- shooting_data$VIC_AGE_GROUP %>% 
+  na_if("1022")
+
+shooting_data$PERP_SEX <- shooting_data$PERP_SEX %>%
+  na_if("U")
+shooting_data$PERP_SEX <- shooting_data$PERP_SEX %>%
+  na_if("(null)")
+
+# I guess unknown makes sense here, actually, but NA to match the perp.
+# Maybe a mistake.
+shooting_data$VIC_SEX <- shooting_data$VIC_SEX %>%
+  na_if("U")
+
+# Similar to sex above, since we have a victim, unknown makes sense.
+# Still I march on.
+shooting_data$VIC_RACE <- shooting_data$VIC_RACE %>%
+  na_if("UNKNOWN")
+
+shooting_data$PERP_RACE <- shooting_data$PERP_RACE %>%
+  na_if("UNKNOWN")
+shooting_data$PERP_RACE <- shooting_data$PERP_RACE %>%
+  na_if("(null)")
+```
+
+Now just to re-examine and make sure I didn't break or miss anything. A good opportunity to revisit the null values and see if anything has become useless.
+
+```{r further_checks_2}
+sapply(shooting_data, function(x) n_distinct(x))
+
+shooting_data %>%
+  select(-c("OCCUR_DATE", "OCCUR_TIME")) %>%
+  sapply(unique)
+```
+
+Well, that looks tidier already.  
+Depending on how this turns out, I may need to either remove rows with NA values (victim age group being unknown could mean it was hard to tell or that we are not sure if there was a victim, for example) or change the values to something easier to visualize (changing the racial data to unknown might work better in a bar graph, for example).
+If it remains a problem, perhaps the column needs to go. Maybe the location of the shooting does not give us enough information to be useful even if logically it would (are ATMs frequent targets in a particular borough?).
+  
+
+# Visualization, Analysis, and Modeling  
+  
+"Add at least two different visualizations & some analysis to your Rmd.  Does this raise additional questions that you should investigate?"  
+  
+Keeping it short, and keeping away from Minority Report territory, let's stick to victim statistics.  
+Let's look at the rate of murders in New York over the data set as a function of time for our first visualization.  
+The main question here is whether murder rates are going up or down as time goes on - or how safe are people?  
+
+For the second visualization, I want to see what kinds of people are victims of shootings in general (that is, murder or not, just involvement is enough to count), broken down by race, sex, and age group.  
+This will necessitate removing the NA/Unknown variables from the table.  
+  
+  
+## Visualization #1: Murder rate over time
+  
+Some notes: I first visualized this over the whole time frame. Obviously there are many days in the set, and despite what some pearl-clutchers say, there are many days without a murder, so everything gets bunched together and is illegible.  
+As such, I opted to look at cumulative murders over the time - this has the benefit of showing a trend line that'll always be increasing, but the slope will tell us if things are getting better or worse.  
+  
+```{r murder_rate_vis}
+murders_per_day_NYC <- shooting_data %>%
+  # Select only murders
+  filter(STATISTICAL_MURDER_FLAG == TRUE) %>%
+  # Only occurrence date matters - though now I feel like I oversimplified.
+  group_by(OCCUR_DATE) %>%
+  summarize(TOTAL_MURDERS = n())
+
+# Just to get a vague idea before visualizing.
+murders_per_day_NYC
+
+# Actually plot the data.
+murders_per_day_NYC %>%
+  ggplot(aes(x = OCCUR_DATE, y = cumsum(TOTAL_MURDERS))) + 
+  # geom_point(aes(color = "# Murders")) +
+  geom_line(aes(color = "# Murders")) +
+  labs(x = "Date", y = "Total murders")
+```
+
+Well, it certainly looks more bleak when put this way than just looking at individual murders per day.  
+We can see some variations in slope, but it's more-or-less linear, with a notable bump around the time COVID rolled around.  
+
+Some further questions that arise from even this simple visualization (and I'll keep it short, it just occurred to me that some of my peers are going to be skimming this, sorry for it being so long!) is what precisely contributed to the uptick? Does COVID just make people crazy? Probably not. Maybe more hurting for money, maybe more resources were dedicated to sending out police to shooting sites. How severe was the lock-down in the state? Where did these murders occur? For now, those questions will go unanswered.  
+  
+  
+## Visualization #2: Victim statistics  
+  
+Since the previous visualization raised a lot of questions despite its simplicity, I won't break the bank on this one.  
+I am interested in the kinds of people at the wrong end of shooting incidents. Are people of a certain race, sex, or age group more likely to get shot at?  
+Since I want to look at all of these together, I should remove any rows in the data where any of these are missing.  
+```{r victim_stats_vis}
+shooting_data %>%
+  # Only grab the info we care about for this question
+  select(VIC_AGE_GROUP, VIC_RACE, VIC_SEX) %>%
+  # ignoring the incomplete data
+  drop_na() %>%
+  # And create some bar graphs.
+  # Man, I wish I was more familiar with this stuff than I am.
+  ggplot(aes(x = VIC_RACE)) +
+  geom_bar(aes(fill = VIC_SEX)) +
+  # geom_bar(aes(x = VIC_AGE_GROUP)) +
+  theme(
+        # label length led to overlap - this doesn't look great, but allows the information to show.
+        axis.text.x = element_text(angle = -10)) +
+  labs(x = "Race", y = "Number of shooting victims")
+  
+```
+
+At a glance, age grouping was not that interesting, pretty much what would be expected.  
+That is, most victims were between $18$ and $44$ with either extreme of the age group having few cases.  
+This cluttered the visualization significantly and felt like maybe it counted as a separate question, so it was removed.  
+Now, for what remains, looking at the data by race and sex, we see a huge number of victims are black, at a glance, more than all other groups combined. This raises many questions in itself.  
+Is this an over-representation based on racial makeup of the city? By what margin? How are groups determined (Who decides what is black versus black Hispanic, for instance)? Are these crimes limited to specific boroughs or even locations within boroughs (the location data we purged at the beginning may be of interest now)? What situations do these crimes happen in, and can they be attributed to something other than or co-morbid (?) with race? What do we even make of the lopsided sex results?  Is this a function of population density? Poverty? 
+How about how this compares to other states?  
+  
+There's a lot to unpack here!
+
+# Bias Identification
+"Write the conclusion to your project report and include any possible sources of bias.  Be sure to identify what your personal bias might be and how you have mitigated that."  
+  
+Starting with the personal. I am quite left leaning (leaning might be too gentle a term). Upon seeing the name of the data set, I just assumed it was shootings involving officers as opposed to responses to shooting crimes, so that was a bad start.
+I am non-American, so while I don't have direct exposure to the culture, my country is constantly inundated with news about the place, so ideas about crime rates and racial/gun politics for sure bleeds through. In fact, before I used the cumulative sum of murders, I was shocked with how low the daily deaths were, with many days without murders.  
+Some biases were confirmed, though. For example, the assumption that most crime is targeted towards minorities.  
+A bias I did not investigate is the assumption that most perpetrators are also minorities, specifically black males.  
+I mitigated these biases by looking only at victim information and total murders, I tried not to consider things like perpetrator information or splitting data up by borough (aha, these cops are lazier!), focusing only on the results.
+  
+In terms of bias from the data, much of the data was incomplete, likely based on the reports of the responding officers at the time, so it may not be entirely trustworthy. For instance, there were a few rows that had strange values for age ranges or unknown/missing information for age/race.
+I dealt with these just by ignoring those lines (there weren't many, thankfully).
+

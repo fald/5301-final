@@ -1,0 +1,454 @@
+---
+title: "3-2 Project Demo"
+author: "F Aldabbas"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r lib}
+# First thing is to library in the tidyverse packages as standard fare.
+library(tidyverse)
+```
+
+For the demonstration, we are looking at COVID data from Johns Hopkins.
+So we want to import data.
+This is all from the same Github, so the initial part of the URL will be the same.
+
+```{r import_data}
+url_base <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+filenames <- c(
+  "time_series_covid19_confirmed_US.csv",
+  "time_series_covid19_confirmed_global.csv",
+  "time_series_covid19_deaths_US.csv",
+  "time_series_covid19_deaths_global.csv"
+  # "time_series_covid19_recovered_global.csv"
+  )
+
+# Concatenate in the filenames to the base url
+urls <- str_c(url_base, filenames)
+
+# Now read the data into variables
+cases_US <- read_csv(urls[1])
+cases_global <- read_csv(urls[2])
+deaths_US <- read_csv(urls[3])
+deaths_global <- read_csv(urls[4])
+```
+
+```{r data_inspect}
+# Look at the data briefly. What is in it? What can be ignored or is not useful?
+cases_global
+```
+
+```{r tidy}
+# Latitude and longitude are not necessary for our analysis, so that's one aspect we can tidy up.
+# We may also want to tidy up the country/region and province/state.
+# We can also tidy up in the sense of one observation per row - namely the dates reported.
+# Recall PIPES
+
+cases_global <- cases_global %>%
+  # Turn cols into rows - everything "except" province/state, country/region, lat, long
+  pivot_longer(cols = -c('Province/State', 'Country/Region', 'Lat', 'Long'),
+               names_to = "Date",
+               values_to = "Cases") %>%
+  # And now drop the lat/long columns entirely
+  select(-c("Lat", "Long"))
+```
+```{r new_cases}
+# Looks like the data has been super updated since the course one, 3x as long lol
+cases_global
+```
+
+```{r tidy2}
+# Lets do some similar things for the other datasets
+deaths_global <- deaths_global %>%
+  pivot_longer(
+    cols = -c("Province/State", "Country/Region", "Lat", "Long"),
+    names_to = "Date",
+    values_to = "Deaths"
+  ) %>%
+  select(-c("Lat", "Long"))
+
+deaths_global
+```
+
+Now transform the data - we just want to combine the two data frames now so that
+we have a combination of cases and deaths.  
+
+```{r data_transform}
+global <- cases_global %>%
+  full_join(deaths_global) %>%
+  # ...why?
+  rename("Country_Region" = "Country/Region",
+         "Province_State" = "Province/State") %>%
+  # Change the date from a string to a date object - to do date things to.
+  # USE BACKTICKS - else you are passing the string in, which obviously
+  # cannot be formatted as a date.
+  mutate("Date" = mdy(`Date`))
+```
+
+Just double check there are no glaring issues.
+
+```{r global_summary}
+summary(global)
+```
+
+Just looking at a few rows and looking briefly at the breakdown, there are a
+lot of rows that don't have any cases.  
+Those are maybe not so useful, so we'll drop them.
+
+```{r no_case_transform}
+global <- global %>%
+  filter(Cases > 0)
+
+summary(global)
+
+global
+```
+
+For further analysis, we might want to make sure that values are valid and not 
+"obvious" typos.  
+
+```{r verification_max}
+# We have our current max as higher than this, so we can just see if
+# it 'looks right' with what we get back.
+global %>% filter(Cases > 103500000)
+
+# USA USA USA!
+```
+
+Now we can do a similar thing for the US data specifically.  
+A quick summary shows us a bunch more columns that the global data did not have.
+```{r us_data}
+summary(cases_US)
+summary(deaths_US)
+
+cases_US
+```
+
+Well, the dates are a pain, so we'll for sure pivot those.  
+iso2, iso3, code3, and Country_Region are all going to be the same throughout the table, so we can probably safely ditch those as well.
+Lat and Long_, like in the previous data sets, is also not of any interest.  
+We also don't care about the UID, no idea what FIPS is, and the Combined_Key is just derivative anyway, so into the trash you go.  
+We will save dropping the $0$ cases until after we join it with the deaths.  
+I don't think the order will matter, though.  
+  
+Do ensure that even if data sets are similar that you actually verify. For example, the deaths data set includes an extra column, so copy-pasting the cases set transformation would result in trash.  
+  
+A little research also tells us that Admin2 refers to the county, so we can mutate that in the combination.
+
+```{r pivot_dates}
+cases_US <- cases_US %>%
+  # All cols except the starting ones
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "Date",
+               values_to = "Cases") %>%
+  # At this point, just easier to include what we want.
+  select(-c(`iso2`, `iso3`, `code3`, `Lat`, 
+            `Long_`, `UID`, `FIPS`)) 
+# Turns out these match the global data, so we should keep 'em.
+#,`Country_Region`, `Combined_Key`))
+
+# Oops! Ensure data frames are similar!
+# This one has population info that I didn't notice on first go and it messed
+# things up.
+deaths_US <- deaths_US %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "Date",
+               values_to = "Deaths") %>%
+  select(-c(`iso2`, `iso3`, `code3`, `Lat`,
+            `Long_`, `UID`, `FIPS`))
+  # select(c(`Admin2`, `Province_State`, `Date`, `Population`, `Deaths`))
+
+states <- cases_US %>%
+  full_join(deaths_US) %>%
+  # Matching global data as much as possible for now.
+  # rename(`County` = `Admin2`,
+  #       `State` = `Province_State`) %>%
+  mutate(`Date` = mdy(`Date`)) %>%
+  filter(`Cases` > 0) %>%
+  # just a rearranging so cases are beside deaths
+  select(Admin2, Province_State, Date, Cases, Deaths, Population)
+```
+
+Okay, with that monster out of the way, check out our new data frame.
+
+```{r us_data_summary}
+states
+
+summary(states)
+```
+
+It looks alright so far. But if we want to do a comparative analysis between the US and global data, we need some parity.  
+So this means my earlier instinct of dropping the country and such was incorrect.  
+Time to fix that.
+
+```{r parity_transform}
+global <- global %>%
+  unite("Combined_Key",
+        c("Province_State", "Country_Region"),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+
+head(global)
+```
+
+```{r import_data_2}
+# We want population numbers to add to the global data
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+df <- read_csv(uid_lookup_url)
+summary(df)
+```
+
+With this information under our belt, 
+```{r global_population_transform}
+global <- global %>%
+  left_join(df, by = c("Province_State", "Country_Region", "Combined_Key")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, Date,
+         Cases, Deaths, Population, Combined_Key)
+
+# As we see, we will need to undo our overzealous contribution - or simply go back and not type it in in the first place - but it's looking much better.
+global
+```
+
+Let's re-check the two main data frames to see what needs to be (un)tweaked.
+Previous lines will be commented out, but not deleted.
+
+```{r parity_check}
+global
+
+states
+```
+
+Okay, so with the combined keys in place for the global data, we might (but I won't jump the gun again) be okay to remove the province_state and country_region columns.
+Plus, we can combine Admin2 (county) and province_state from the states data into a combined key for that data set, and we'll be golden.
+Note that since we kind of tore out the rows with no cases, depending on when they started in each state, rows will be incomplete.  
+**This was a mistake.**
+
+```{r more_tweaking}
+states <- states %>%
+  mutate("Country_Region" = "US")
+  # unite("Combined_Key", 
+  #      c("Admin2", "Province_State", "Country_Region"),
+  #      sep = ", ")
+```
+
+```{r per_state}
+US_by_state <- states %>%
+  # Grouping over all counties within the state
+  group_by(Province_State, Country_Region, Date) %>%
+  # Summarizing such that we sum all cases, deaths, and population within a group
+  summarize(Cases = sum(Cases), 
+            Deaths = sum(Deaths),
+            Population = sum(Population)) %>%
+  # A useful derived metric
+  mutate(Deaths_Per_Million = Deaths * 1000000 / Population) %>%
+  # Unnecessary since those are all our columns already...
+  select(Province_State, Country_Region, 
+         Date, Cases, Deaths, 
+         Deaths_Per_Million, Population) %>%
+  ungroup()
+
+US_by_state
+```
+
+```{r US_totals}
+# Cumulative per date in the US across all states
+US_totals <- US_by_state %>%
+  group_by(Country_Region, Date) %>%
+  summarize(Cases = sum(Cases),
+            Deaths = sum(Deaths),
+            Population = sum(Population)) %>%
+  mutate(Deaths_Per_Million = Deaths * 1000000 / Population) %>%
+  select(Date, Cases, Deaths, Deaths_Per_Million, Population) %>%
+  ungroup()
+
+US_totals
+```
+
+Now that we have a totals dataframe, even though we know we kind of made a mistake and won't go back to fix it, time to visualize!
+
+```{r visualize_US_totals}
+US_totals %>%
+  # should be all since we beefed it
+  filter(Cases > 0) %>%
+  # ggplot and an aesthetic mapping - see expressway R course for refresher
+  ggplot(aes(x = Date, y = Cases)) +
+  geom_line(aes(color = "Cases")) +
+  # geom_point(aes(color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  # geom_point(aes(y = Deaths, color = "Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45)) +
+  labs(title = "COVID19 in the US", y = NULL)
+```
+
+If we want, we can limit our visualization to a state.
+
+```{r NY_focus}
+state <- "New York"
+
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date, y = Cases)) +
+  geom_line(aes(color = "Cases")) +
+  # geom_point(aes(color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  # geom_point(aes(y = Deaths, color = "Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+These visualizations, simple as they are, leads to questions.  
+For example, since we're looking at a log-scale, it looks like the deaths have leveled off. Is this true? Is it just an artifact of how we chose to visualize it? We can try again, either without the log scale or by looking at another metric, the deaths per million, that scales much more slowly.
+
+```{r revisit_visualize_NY}
+state <- "New York"
+
+# No log scale
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date, y = Cases)) +
+  geom_line(aes(color = "Cases")) +
+  # geom_point(aes(color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  # geom_point(aes(y = Deaths, color = "Deaths")) +
+  # scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+
+# Look at just the deaths per million
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date, y = Deaths_Per_Million)) +
+  geom_line(aes(y = Deaths_Per_Million, color = "Deaths per million")) +
+  # scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+This way, we see depending on how we plot things, we notice different things about the same data. It seems, however, that things have not leveled off and there are instead spikes.
+That was some jumping ahead attempting to analyze it, but now for the course version.
+
+So to *properly* analyze this apparent level-off, we can add columns to our data.
+
+```{r analyze_by_state}
+US_by_state <- US_by_state %>%
+  mutate(new_cases = Cases - lag(Cases),
+         new_deaths = Deaths - lag(Deaths))
+
+US_totals <- US_totals %>%
+  mutate(new_cases = Cases - lag(Cases),
+         new_deaths = Deaths - lag(Deaths))
+
+tail(US_totals) %>%
+  select(new_cases, new_deaths, everything())
+# lol, somehow we have a negative in here.
+
+US_totals %>%
+  ggplot(aes(x = Date, y = new_cases)) +
+  geom_line(aes(color = "New cases")) +
+  geom_line(aes(y = new_deaths, color = "New deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in the US", y = NULL)
+```
+
+We can do this same thing by state or by looking at a different country altogether, maybe getting more detailed information for that country.  
+We can then answer questions such as "which is the worst state?", though we would need to specify if we measure that in terms of total deaths, deaths per million population, or some other metric (fuck Idaho).
+
+As you are performing an analysis, always be asking questions. For example:  
+Are the deaths reported the same?  
+What caused the negative new deaths/cases in the above table?  
+Is the data trustworthy?  
+  
+  
+Now how about modeling data?
+Part of the iterative process as you analyze your data.  
+More variables may need to be introduced to build the model.
+This will depend on what you've found out so far and what you'd like to consider.  
+In the particular example above, you may want to explore population density, extent of the lock down, political affiliation, climate of the area in question, or more.  
+  
+Once you've decided what you want to include, do so, re-visualize, and remodel. See if that added variable has had a statistically significant effect.  
+
+For the sake of demonstration, let's pick something simple that doesn't require more imported information.  
+Let's look at a linear model - that is, the variable in question is predicted linearly by other variables.  
+We'll choose deaths per million as a function of cases per million.  
+
+```{r linear_model}
+# See the documentation for details, but this is the function to fit
+# a linear model - including multivariate ones.
+# First let's put in the cases per million
+US_by_state <- US_by_state %>%
+  mutate(Cases_Per_Thousand = Cases * 1000 / Population) %>%
+  mutate(Deaths_Per_Thousand = Deaths * 1000 / Population)
+
+# Attempt to fix error without full understanding.
+US_by_state$Deaths_Per_Thousand[US_by_state$Deaths_Per_Thousand == "Inf"] = 0
+US_by_state$Deaths_Per_Thousand[is.nan(US_by_state$Deaths_Per_Thousand)] = 0
+US_by_state$Deaths_Per_Thousand[is.na(US_by_state$Deaths_Per_Thousand)] = 0
+max(US_by_state$Deaths_Per_Thousand)
+min(US_by_state$Deaths_Per_Thousand)
+
+
+mod <- lm(
+  Deaths_Per_Thousand ~ Cases_Per_Thousand,
+  data = US_by_state
+)
+```
+
+```{r}
+US_by_state
+```
+
+Whatever, been on this long enough, so obviously the solution is to barrel ahead without fixing minor issues that will absolutely crop up later.  
+So say we successfully created this linear model.  
+You could then create a summary of it to note the statistical information.  
+
+You can then predict (`pred`) based on the model, see how closely it cleaves to reality, and extrapolate information from there.  
+(I think the prof had a separate table with just 50-whatever entries by state, that might work, but doesn't explain the division error?).  
+If the predictions are excellent, good. If they correlate, but aren't perfect, there's probably some other consideration that is worth looking for/at.  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
