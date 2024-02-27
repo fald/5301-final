@@ -36,15 +36,137 @@ deaths_global <- read_csv(urls[4])
 ```
 
 
+```{r global_inspect}
+# Look at the data briefly. What is in it? What can be ignored or is not useful?
+cases_global
+```
+
+```{r global_tidy}
+# Latitude and longitude are not necessary for our analysis, so that's one aspect we can tidy up.
+# We may also want to tidy up the country/region and province/state.
+# We can also tidy up in the sense of one observation per row - namely the dates reported.
+# Recall PIPES
+
+cases_global <- cases_global %>%
+  # Turn cols into rows - everything "except" province/state, country/region, lat, long
+  pivot_longer(cols = -c('Province/State', 'Country/Region', 'Lat', 'Long'),
+               names_to = "Date",
+               values_to = "Cases"
+               ) %>%
+  # And now drop the lat/long columns entirely
+  select(-c("Lat", "Long"))
+
+# Similar for the global deaths
+deaths_global <- deaths_global %>%
+  pivot_longer(cols = -c("Province/State", "Country/Region", "Lat", "Long"),
+               names_to = "Date",
+               values_to = "Deaths"
+               ) %>%
+  select(-c("Lat", "Long"))
+
+```
+
+```{r global_check}
+# Looks like the data has been super updated since the course one, 3x as long lol
+cases_global
+deaths_global
+```
+
+```{r global_joins}
+# They look good, now to join them.
+global <- cases_global %>%
+  full_join(deaths_global) %>%
+  # I guess for ease of use later - makes it easier when combining with US data?
+  rename(Country_Region = `Country/Region`,
+         Province_State = `Province/State`) %>%
+  mutate(Date = mdy(Date))
+
+global
+```
+
+```{r global_filter_cases}
+# Don't care about rows with no cases.
+global <- global %>%
+  filter(Cases > 0)
+
+# At this point we could also check the numbers in the high range and make sure
+# they exist later in the data just as a brief manual verification.
+# Just a sanity check. Looks fine in the console, so not worth showing in here.
+```
+  
+  
+Now let's look at the US-specific data.
+```{r us_inspect}
+cases_US
+deaths_US
+```
+
+We have a lot more granular information here.  
+Similar to the global data, we'll want to keep a hold of the dates to pivot.  
+Admin2 also looks like it may be useful, but not much before it.
+```{r us_tidy}
+# Like we did with the global info, pivot the dates.
+cases_US <- cases_US %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "Date",
+               values_to = "Cases") %>%
+  # Make sure the dates are date objects
+  mutate(Date = mdy(Date)) %>%
+  # Select everything from Admin2 onward
+  select(Admin2:Cases) %>%
+  # but then drop the Lat/Lon
+  select(-c(Lat, Long_))
+  
+# Be sure to check the formats of both sets - they may be different.
+# Deaths has a population metric, for example.
+# But we do want the death counterpart to match up
+deaths_US <- deaths_US %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "Date",
+               values_to = "Deaths") %>%
+  mutate(Date = mdy(Date)) %>%
+  select(Admin2:Deaths) %>%
+  select(-c(Lat, Long_))
+```
+
+```{r us_joins}
+US <- cases_US %>%
+  full_join(deaths_US)
+
+US
+```
+The population data is interesting, but we don't have that for the global data set, so we'll want to find that.
+We'll also want to mutate it a bit more to match up with the columns of the US data set.
+
+```{r global_mutate}
+# CSV for global population info. Same repository.
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+uid
 
 
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region), 
+        sep=", ",
+        na.rm = TRUE,
+        remove = FALSE)
+```
 
+```{r global_joins_2}
+# Now joining the global and uid tables.
+# Feels like the class method was a little off? Oh well, end result worked.
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  # Like here, could have just excluded these in the previous cell.
+  select(-c(UID, FIPS)) %>%
+  select("Province_State", "Country_Region", "Date", "Cases", "Deaths", "Population", "Combined_Key")
 
-
-
-
-
-
+global
+```
 
 
 
