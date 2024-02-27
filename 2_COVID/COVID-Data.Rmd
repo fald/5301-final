@@ -10,6 +10,8 @@ output: pdf_document
 library(tidyverse)
 ```
 
+## Intro and Data
+
 For the demonstration, we are looking at COVID data from Johns Hopkins.
 So we want to import data.
 This is all from the same Github, so the initial part of the URL will be the same.
@@ -40,6 +42,10 @@ deaths_global <- read_csv(urls[4])
 # Look at the data briefly. What is in it? What can be ignored or is not useful?
 cases_global
 ```
+
+## Tidying and combining tables
+
+### Global data
 
 ```{r global_tidy}
 # Latitude and longitude are not necessary for our analysis, so that's one aspect we can tidy up.
@@ -95,6 +101,7 @@ global <- global %>%
 ```
   
   
+### US data
 Now let's look at the US-specific data.
 ```{r us_inspect}
 cases_US
@@ -135,6 +142,9 @@ US <- cases_US %>%
 
 US
 ```
+
+### Matching the data
+
 The population data is interesting, but we don't have that for the global data set, so we'll want to find that.
 We'll also want to mutate it a bit more to match up with the columns of the US data set.
 
@@ -168,6 +178,10 @@ global <- global %>%
 global
 ```
 
+## Visualize
+
+At this point, it doesn't exactly match up - US data still has the Admin2 column, but the last time I put a file together in a way that made sense to me that deviated from the tutorial, it came back to haunt me.  
+So, noting that I think it's an issue, let's continue without fixing it for now!
 
 
 
