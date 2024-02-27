@@ -1,0 +1,61 @@
+---
+title: "COVID-Data"
+author: "Anonymous"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r lib}
+# First thing is to library in the tidyverse packages as standard fare.
+library(tidyverse)
+```
+
+For the demonstration, we are looking at COVID data from Johns Hopkins.
+So we want to import data.
+This is all from the same Github, so the initial part of the URL will be the same.
+
+```{r import_data}
+url_base <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+filenames <- c(
+  "time_series_covid19_confirmed_US.csv",
+  "time_series_covid19_confirmed_global.csv",
+  "time_series_covid19_deaths_US.csv",
+  "time_series_covid19_deaths_global.csv"
+  # "time_series_covid19_recovered_global.csv"
+  )
+
+# Concatenate in the filenames to the base url
+urls <- str_c(url_base, filenames)
+
+# Now read the data into variables
+cases_US <- read_csv(urls[1])
+cases_global <- read_csv(urls[2])
+deaths_US <- read_csv(urls[3])
+deaths_global <- read_csv(urls[4])
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
