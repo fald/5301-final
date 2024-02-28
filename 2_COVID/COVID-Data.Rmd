@@ -183,15 +183,221 @@ global
 At this point, it doesn't exactly match up - US data still has the Admin2 column, but the last time I put a file together in a way that made sense to me that deviated from the tutorial, it came back to haunt me.  
 So, noting that I think it's an issue, let's continue without fixing it for now!
 
+Check out the US by state to make use of group by and summarize.
+```{r us_per_state}
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, Date) %>%
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths),
+            Population = sum(Population)) %>%
+  mutate(Deaths_Per_Mil = Deaths * 1000000 / Population) %>%
+  select(Province_State, Country_Region, Date, Cases, Deaths,
+         Deaths_Per_Mil, Population) %>%
+  ungroup()
+
+US_by_state
+```
+
+Now check out the total for the US.
+```{r us_total}
+US_totals <- US_by_state %>%
+  group_by(Country_Region, Date) %>%
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths),
+            Population = sum(Population)) %>%
+  # Nice rounding, bro.
+  mutate(Deaths_Per_Mil = Deaths * 1000000 / Population) %>%
+  select(Country_Region, Date, Cases, Deaths, Deaths_Per_Mil,
+         Population) %>%
+  ungroup()
+
+tail(US_totals)
+```
+
+Now for the actual visualization part.  
+This is a simple one *from the demo*.  
+```{r visualize_1}
+# Overall
+US_totals %>%
+  # Based on revised numbers, this filter turns out to be useless
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date, y = Cases)) +
+  geom_line(aes(color = "Cases")) +
+  geom_point(aes(color = "Cases")) +
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  geom_point(aes(y = Deaths, color = "Deaths")) + 
+  # Given the huge scale diff, pretty mandatory
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+
+
+# By state
+state <- "New York"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  # Not necessarily useless this time (but maybe)
+  filter(Cases > 0) %>%
+  ggplot(aes(x = Date, y = Cases)) +
+  geom_line(aes(color = "Cases")) + 
+  geom_point(aes(color = "Cases")) + 
+  geom_line(aes(y = Deaths, color = "Deaths")) +
+  geom_point(aes(y = Deaths, color = "Deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+Questions can arise such as how many deaths total, have the deaths been leveling out, and so on.  
+To answer these, add different data to make it look better!
+
+```{r us_analysis}
+US_by_state <- US_by_state %>%
+  mutate(New_Cases = Cases - lag(Cases),
+         New_Deaths = Deaths - lag(Deaths))
+
+US_totals <- US_totals %>%
+    mutate(New_Cases = Cases - lag(Cases),
+           New_Deaths = Deaths - lag(Deaths))
+
+US_totals %>%
+  ggplot(aes(x = Date, y = New_Cases)) +
+  geom_line(aes(color = "New_Cases")) +
+  geom_line(aes(y = New_Deaths, color = "New_Deaths")) +
+  scale_y_log10()
+```
+Zig-zag. Looks like the average is slowing down, but not petering out like the earlier visualization seemed to imply.
+  
+  
+## Model
+Now linearly model it.
+```{r linear_model}
+model <- lm(Deaths ~ Cases, data = US_by_state)
+summary(model)
+
+US_State_Predictions <- US_by_state %>%
+  mutate(Predicted_Deaths = predict(model))
+
+# It's plottin' time
+US_State_Predictions %>%
+  sample_n(1000) %>%
+  ggplot(aes(x = Cases, y = Deaths)) +
+  geom_point(aes(x = Cases, y = Deaths), color = "blue") +
+  geom_line(aes(x = Cases, y = Predicted_Deaths), color = "red")
+```
+
+All over the place. The correlation is clear, but  especially as cases increase, the prediction goes notably off.  
+So there are probably other factors in play, such as lockdown measures working, vaccines being rolled out, whatever, and we could hunt down such information.  
+  
+  
+## Extra Visualizations and Analysis
+I'm interested in how different states can be pitted against each other in terms of proportional deaths.  
+This results in an awful looking graph, however. Entirely too busy and such, so we look instead at the top and bottom few instead.  
+```{r us_deaths_visualization}
+# In case the data set changes in the future
+latest <- US_by_state$Date %>%
+  max(na.rm = TRUE)
+
+# top and bottom X values, just here to change quickly
+number_from_each <- 5 
+
+# Actually find the states of interest
+least <- US_by_state %>%
+  filter(Date == latest) %>%
+  arrange(Deaths_Per_Mil) %>%
+  head(number_from_each) %>%
+  select(Province_State)
+
+most <- US_by_state %>%
+  filter(Date == latest) %>%
+  # Get rid of those pesky cruise ships
+  filter(Population > 0) %>%
+  # Hm, more efficient to have a base object that's already sorted?
+  arrange(Deaths_Per_Mil) %>%
+  tail(number_from_each) %>%
+  select(Province_State)
+
+states_of_interest <- bind_rows(most, least)
 
 
 
 
+# Visualize
+US_by_state %>%
+  filter(Province_State %in% states_of_interest$Province_State) %>%
+  select(Province_State, Date, Deaths_Per_Mil) %>%
+  group_by(Province_State) %>%
+  
+  ggplot(aes(x = Date, y = Deaths_Per_Mil, group = Province_State)) +
+  geom_line(aes(color = Province_State))
+```
+In terms of analysis with the top/bottom 5 states/territories, we surprisingly cannot tell much.  
+The gap between the extremes is large, to be sure, but the territories at the bottom are mostly isolated locations - islands, so this makes perfect sense. The one stand-out is Vermont, though this could be a fluke.
+Some biases that could creep in from the perspective of a non-American is to see that the states with the worst death rates appear to be "American Conservative", while Vermont has a more "American Liberal" reputation.  
+This doesn't necessarily mean anything - and I might not even be right about how the political leanings line up, but to confirm, a good next step would be to maybe randomly sample states instead (as well as, you know, look up the political reaction to dealing with things).
 
 
+And now a similar thing for worldwide data!  
+This time, I'll just look at the end result instead of the steady increase.  
+Also, I'll be taking a random sampling instead of top/bottom, since based on reporting that might not be that interesting.  
+```{r global_deaths_visualization}
+latest <- max(global$Date)
+number_to_sample <- 8
+
+global_deaths_per_mil <- global %>%
+  # Don't care about things other than the country as a whole
+  select(-c(Combined_Key, Province_State)) %>%
+  group_by(Country_Region) %>%
+  filter(Date == latest) %>%
+  # For combining cases with different "Province_State" vals
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths), Population = sum(Population)) %>%
+  mutate(Deaths_Per_Mil = Deaths * 1000000 / Population) %>%
+  # The only parts I care about
+  select(Country_Region, Deaths_Per_Mil) %>%
+  drop_na()
+
+# Visualize time
+global_deaths_per_mil %>%
+  sample_n(number_to_sample) %>%
+  ggplot(aes(x = Country_Region, y = Deaths_Per_Mil)) +
+  geom_col(aes(fill = Country_Region)) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+Running the above code a few times has given me the impression that, above all, countries that (I am definitely biased in this) are more likely to - or have the reputation of being more likely to - report things accurately have consistently higher numbers.  
+This could just be because those countries are more globally connected in terms of consistent travel, like the UK and France, or it could simply be me justifying a pattern I vaguely noticed after the fact.  
+An interesting exception that caught my eye was Japan's low death per million count, though it is less surprising when you read up about how they dealt with the pandemic.  
 
 
+## Extra Model
+Instead of correlating cases to deaths, I want to look at the total population and how that corresponds to deaths.  
+I have an inkling that this won't be super obvious in outcome, which could lead to more interesting questions down the line.  
+```{r visualization_global}
+global_predictions <- global %>%
+  group_by(Country_Region) %>%
+  # Keeping it simple so there aren't 360k values to plot
+  filter(Date == latest) %>%
+  summarize(Cases = sum(Cases), Deaths = sum(Deaths), Population = sum(Population)) %>%
+  drop_na()
 
+global_model <- lm(Deaths ~ Population, data = global_predictions)
 
+summary(global_model)
 
+global_predictions <- global_predictions %>%
+  mutate(Predicted_Deaths = predict(global_model))
 
+global_predictions %>%
+  # Literally just filtering out India because in this table it skews everything
+  filter(Country_Region != "India") %>%
+  # sample_n(10) %>%
+  ggplot(aes(x = Population, y = Deaths)) +
+  geom_point(aes(x = Population, y = Deaths), color = "blue") +
+  geom_line(aes(x = Population, y = Predicted_Deaths), color = "red")
+
+```
+
+There doesn't seem to be a single angle or range or number of samples from which this relation fits a linear model.  
+This seems to, at least on the surface, tell us that the population of a place doesn't really have a bearing on how well they handled the pandemic.  
+This makes enough sense. Future questions would then be to narrow down why population itself is not a good indicator. My first guess is that there are just so many low-population isolated areas that are messing with the model, though based on the random sampling spree I went through, this didn't seem to change the accuracy.  
+My next hunch is that the nation's wealth, which may be tied in part to population, would be the primary factor at play. Especially since these data are from 2023, so we're not exactly in the heyday of the pandemic.
